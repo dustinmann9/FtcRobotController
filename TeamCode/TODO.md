@@ -10,11 +10,15 @@ they change between releases.
 
 ## Prerequisites (blocking both)
 
-- [ ] Drivetrain hardware finalized (motor count/positions, mecanum vs. other)
-- [ ] Odometry sensor decision made (dead wheels vs. drive encoders vs. other) --
-      both libraries tune against real encoder data, so this has to exist first
-- [ ] Confirm hub port/motor naming convention so tuning OpModes have something
-      real to reference
+- [x] Drivetrain hardware finalized -- 4-motor omni (yellow diagonal-roller wheels),
+      see `drive/OmniDrivetrain.java`
+- [ ] Odometry sensor decision made (dead wheels + odometry computer vs. drive
+      encoders vs. other) -- both libraries tune against real encoder data, so this
+      has to exist first. Leaning toward a dead-wheel odometry computer (goBILDA
+      Pinpoint / SparkFun OTOS) over drive-encoder-only, since mecanum/omni wheel
+      slip during strafing makes drive encoders noisy for position tracking.
+- [x] Confirm hub port/motor naming convention -- `motor0..motor3`, mapped to
+      corners in `OmniDrivetrain.java`'s `*_NAME` constants
 
 ## RoadRunner
 
