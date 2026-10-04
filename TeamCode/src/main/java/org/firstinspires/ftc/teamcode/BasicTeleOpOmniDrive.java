@@ -4,6 +4,7 @@ import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
 import org.firstinspires.ftc.teamcode.drive.OmniDrivetrain;
+import org.firstinspires.ftc.teamcode.drive.RobotConfigs;
 
 /**
  * BASIC TELEOP -- full holonomic drive. Left stick controls translation
@@ -21,7 +22,7 @@ import org.firstinspires.ftc.teamcode.drive.OmniDrivetrain;
 public class BasicTeleOpOmniDrive extends OpMode {
     private static final int SPEED_SCALE_MAX_STEPS = 10; // 10 steps of 0.1 = scale of 1.0
 
-    private final OmniDrivetrain drivetrain = new OmniDrivetrain();
+    private final OmniDrivetrain drivetrain = new OmniDrivetrain(RobotConfigs.ACTIVE);
     // Tracked as integer steps, not a double, so repeated +/-0.1 presses can't drift
     // away from a clean multiple of 0.1 due to floating-point rounding.
     private int speedScaleSteps = SPEED_SCALE_MAX_STEPS;
@@ -42,8 +43,17 @@ public class BasicTeleOpOmniDrive extends OpMode {
         double speedScale = speedScaleSteps / (double) SPEED_SCALE_MAX_STEPS;
 
         // gamepad y is inverted: pushing the stick forward (away from you) reports negative.
+        //
+        // An earlier version of this code swapped these two axes, based on testing done
+        // before two wheels' Direction settings were fixed (see OmniDrivetrain.java). That
+        // swap was compensating for the broken wheel directions, not a real chassis/wheel
+        // geometry issue -- with all four wheels individually verified correct
+        // (VerifyWheelDirectionDiagnostic), drive()'s forward/strafeRight parameters behave
+        // exactly as documented, so this is back to the standard assignment.
         double forward = -gamepad1.left_stick_y * speedScale;
         double strafeRight = gamepad1.left_stick_x * speedScale;
+        // That sign flip was compensating for the frontRight/backLeft port-mapping bug
+        // in OmniDrivetrain.java; now that it's fixed, the raw stick value is correct.
         double rotateClockwise = gamepad1.right_stick_x * speedScale;
 
         drivetrain.drive(forward, strafeRight, rotateClockwise);

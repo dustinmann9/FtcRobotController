@@ -5,6 +5,7 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.teamcode.drive.OmniDrivetrain;
+import org.firstinspires.ftc.teamcode.drive.RobotConfigs;
 import org.firstinspires.ftc.teamcode.localization.ImuLocalizer;
 import org.firstinspires.ftc.teamcode.localization.Localizer;
 import org.firstinspires.ftc.teamcode.util.RobotLogger;
@@ -36,7 +37,7 @@ public class AutonomousDriveWhileSpinning extends LinearOpMode {
     // TODO: tune this against your actual robot/floor until it travels "a few feet."
     private static final double DRIVE_DURATION_SECONDS = 3.0;
 
-    private final OmniDrivetrain drivetrain = new OmniDrivetrain();
+    private final OmniDrivetrain drivetrain = new OmniDrivetrain(RobotConfigs.ACTIVE);
     private final Localizer headingSource = new ImuLocalizer();
 
     @Override

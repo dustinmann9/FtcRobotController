@@ -19,41 +19,34 @@ import java.util.Map;
  *
  * drive() mixes a forward/strafe/rotate command into four different wheel
  * powers (the standard mecanum mixing formula), for full holonomic control.
+ *
+ * Which hub port name and Direction belongs to each corner is robot-specific (it's
+ * changed every time we've rebuilt the chassis) -- that lives in a DriveConfig
+ * (see RobotConfigs.java), passed in here rather than hardcoded, so a new chassis
+ * only means adding a new DriveConfig, not editing this class.
  */
 public class OmniDrivetrain implements Subsystem {
-    // Hub is configured with ports named by number (motor0..motor3), not corner --
-    // the corner each one actually drives was confirmed with MotorPortIdentifier:
-    //   motor0 = front-left, motor1 = back-left, motor2 = front-right, motor3 = back-right
-    // If wiring ever changes, only these four lines need to change.
-    private static final String FRONT_LEFT_NAME = "motor0";
-    private static final String FRONT_RIGHT_NAME = "motor2";
-    private static final String BACK_LEFT_NAME = "motor1";
-    private static final String BACK_RIGHT_NAME = "motor3";
-
     // TODO: tune these. 0 gains mean driveAtVelocity() currently commands 0 power.
     private static final double VELOCITY_KP = 0;
     private static final double VELOCITY_KI = 0;
     private static final double VELOCITY_KD = 0;
 
+    private final DriveConfig config;
     private final Map<MotorLocation, RobotMotor> motors = new EnumMap<>(MotorLocation.class);
     private final Map<MotorLocation, PidController> velocityControllers = new EnumMap<>(MotorLocation.class);
 
-    @Override
-    public void init(HardwareMap hardwareMap) {
-        // Directions confirmed by driving: the original guess had positive power
-        // driving the robot backward, so all four are flipped from the original guess.
-        addMotor(hardwareMap, FRONT_LEFT_NAME, "FL", MotorLocation.FRONT_LEFT, DcMotor.Direction.FORWARD);
-        addMotor(hardwareMap, FRONT_RIGHT_NAME, "FR", MotorLocation.FRONT_RIGHT, DcMotor.Direction.REVERSE);
-        addMotor(hardwareMap, BACK_LEFT_NAME, "BL", MotorLocation.BACK_LEFT, DcMotor.Direction.FORWARD);
-        addMotor(hardwareMap, BACK_RIGHT_NAME, "BR", MotorLocation.BACK_RIGHT, DcMotor.Direction.REVERSE);
+    public OmniDrivetrain(DriveConfig config) {
+        this.config = config;
     }
 
-    private void addMotor(HardwareMap hardwareMap, String hardwareMapName, String id,
-                           MotorLocation location, DcMotor.Direction direction) {
-        RobotMotor motor = new RobotMotor(hardwareMap, hardwareMapName, id, location);
-        motor.setDirection(direction);
-        motors.put(location, motor);
-        velocityControllers.put(location, new PidController(VELOCITY_KP, VELOCITY_KI, VELOCITY_KD));
+    @Override
+    public void init(HardwareMap hardwareMap) {
+        for (MotorLocation location : MotorLocation.values()) {
+            RobotMotor motor = new RobotMotor(hardwareMap, config.portName(location), location.name(), location);
+            motor.setDirection(config.direction(location));
+            motors.put(location, motor);
+            velocityControllers.put(location, new PidController(VELOCITY_KP, VELOCITY_KI, VELOCITY_KD));
+        }
     }
 
     @Override
@@ -106,6 +99,17 @@ public class OmniDrivetrain implements Subsystem {
         motors.get(MotorLocation.FRONT_RIGHT).setPower(frontRightPower / maxMagnitude);
         motors.get(MotorLocation.BACK_LEFT).setPower(backLeftPower / maxMagnitude);
         motors.get(MotorLocation.BACK_RIGHT).setPower(backRightPower / maxMagnitude);
+    }
+
+    /**
+     * Drives only the given wheel, stopping the other three. For isolated checks --
+     * e.g. holding the robot up to confirm one wheel's Direction is set so positive
+     * power actually spins it in the forward-rolling sense.
+     */
+    public void driveSingleWheel(MotorLocation location, double power) {
+        for (MotorLocation each : MotorLocation.values()) {
+            motors.get(each).setPower(each == location ? clampPower(power) : 0);
+        }
     }
 
     public void stop() {
