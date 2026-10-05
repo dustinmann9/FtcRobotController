@@ -45,4 +45,24 @@ public class RobotMotor {
     public int getCurrentPosition() {
         return motor.getCurrentPosition();
     }
+
+    /** Zeroes the accumulated encoder count, preserving whatever run mode was active. */
+    public void resetEncoder() {
+        DcMotor.RunMode previousMode = motor.getMode();
+        motor.setMode(DcMotor.RunMode.STOP_AND_RESET_ENCODER);
+        motor.setMode(previousMode);
+    }
+
+    public void setRunMode(DcMotor.RunMode runMode) {
+        motor.setMode(runMode);
+    }
+
+    /**
+     * Commands a target velocity (ticks/second) using the Control Hub firmware's own
+     * closed-loop PIDF, instead of setPower()'s open-loop behavior. Requires
+     * setRunMode(RunMode.RUN_USING_ENCODER) first.
+     */
+    public void setVelocity(double ticksPerSecond) {
+        motor.setVelocity(ticksPerSecond);
+    }
 }

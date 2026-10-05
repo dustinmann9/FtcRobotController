@@ -14,11 +14,16 @@ import java.util.Map;
  * driveAtPower() is the simple path -- same raw power to all four wheels, no
  * correction. driveAtVelocity() drives every wheel toward the same target
  * encoder velocity, using a per-wheel PidController to correct for the fact
- * that nominally-identical motors don't perform identically -- but it does
- * nothing useful until VELOCITY_KP/KI/KD below are tuned away from 0.
+ * that nominally-identical motors don't perform identically. driveAtVelocitySdk()
+ * does the same job via the Control Hub firmware's own built-in PIDF instead of
+ * our PidController -- see WheelVelocityPidDiagnostic/WheelVelocitySdkDiagnostic
+ * for a side-by-side comparison of the two.
  *
  * drive() mixes a forward/strafe/rotate command into four different wheel
- * powers (the standard mecanum mixing formula), for full holonomic control.
+ * powers (the standard mecanum mixing formula), for full holonomic control, open loop.
+ * driveHolonomicAtVelocity() does the same mixing but produces per-wheel target
+ * velocities instead of powers, then PID-corrects each -- holonomic control AND
+ * per-motor variance correction together.
  *
  * Which hub port name and Direction belongs to each corner is robot-specific (it's
  * changed every time we've rebuilt the chassis) -- that lives in a DriveConfig
@@ -26,8 +31,10 @@ import java.util.Map;
  * only means adding a new DriveConfig, not editing this class.
  */
 public class OmniDrivetrain implements Subsystem {
-    // TODO: tune these. 0 gains mean driveAtVelocity() currently commands 0 power.
-    private static final double VELOCITY_KP = 0;
+    // Starting guess, not a tuned value -- see WheelVelocityPidDiagnostic to tune these
+    // against real data. kP sized so a full-scale error (~2796 ticks/s, this drive motor's
+    // no-load max) would request roughly full power on its own: 1.0 / 2796 =~ 0.00036.
+    private static final double VELOCITY_KP = 0.0003;
     private static final double VELOCITY_KI = 0;
     private static final double VELOCITY_KD = 0;
 
@@ -64,14 +71,40 @@ public class OmniDrivetrain implements Subsystem {
 
     /**
      * Drives every wheel toward the same target velocity (encoder ticks/second),
-     * correcting each wheel independently via its own PidController.
+     * correcting each wheel independently via its own PidController. Returns the
+     * target/actual velocity read for each wheel during this call, so a caller that
+     * also wants to log or display them doesn't need to read the hardware again.
      */
-    public void driveAtVelocity(double targetTicksPerSecond) {
+    public WheelVelocities driveAtVelocity(double targetTicksPerSecond) {
+        WheelVelocities result = new WheelVelocities();
         for (MotorLocation location : MotorLocation.values()) {
-            RobotMotor motor = motors.get(location);
-            double error = targetTicksPerSecond - motor.getVelocity();
-            double correction = velocityControllers.get(location).calculate(error);
-            motor.setPower(clampPower(correction));
+            driveWheelToVelocity(location, targetTicksPerSecond, result);
+        }
+        return result;
+    }
+
+    /**
+     * Switches all four wheels to RunMode.RUN_USING_ENCODER, enabling the Control Hub
+     * firmware's own closed-loop velocity control for driveAtVelocitySdk(). Call once
+     * (e.g. in an OpMode's init(), after drivetrain.init()) before using it.
+     */
+    public void enableSdkVelocityControl() {
+        for (RobotMotor motor : motors.values()) {
+            motor.setRunMode(DcMotor.RunMode.RUN_USING_ENCODER);
+        }
+    }
+
+    /**
+     * Drives every wheel toward the same target velocity (ticks/second), same idea as
+     * driveAtVelocity(), but using the Control Hub firmware's own built-in PIDF loop
+     * instead of our PidController. The hub ships default PIDF values keyed to whichever
+     * Motor Type was selected for each port in Configure Robot, so this may need little
+     * or no manual tuning -- unlike driveAtVelocity(), which starts from a rough guess.
+     * Requires enableSdkVelocityControl() to have been called first.
+     */
+    public void driveAtVelocitySdk(double targetTicksPerSecond) {
+        for (RobotMotor motor : motors.values()) {
+            motor.setVelocity(targetTicksPerSecond);
         }
     }
 
@@ -102,6 +135,75 @@ public class OmniDrivetrain implements Subsystem {
     }
 
     /**
+     * Robot-centric holonomic drive, PID-corrected: forward/strafeRight/rotateClockwise
+     * (each typically [-1, 1], straight from a gamepad stick) are scaled by
+     * maxTicksPerSecond and mixed with the same formula as drive() -- but the result is
+     * a per-wheel TARGET VELOCITY instead of a target power, which each wheel's own
+     * PidController (the same instances driveAtVelocity() uses) then corrects toward.
+     * This extends per-motor variance correction across strafing and rotating, not just
+     * straight-line driving.
+     *
+     * Same normalization idea as drive(): if the mix would ask any wheel for more than
+     * maxTicksPerSecond, all four targets are scaled down together so the ratio between
+     * them -- and therefore the intended direction -- is preserved.
+     */
+    public WheelVelocities driveHolonomicAtVelocity(double forward, double strafeRight, double rotateClockwise,
+                                                     double maxTicksPerSecond) {
+        double forwardVelocity = forward * maxTicksPerSecond;
+        double strafeVelocity = strafeRight * maxTicksPerSecond;
+        double rotateVelocity = rotateClockwise * maxTicksPerSecond;
+
+        double frontLeftTarget = forwardVelocity + strafeVelocity + rotateVelocity;
+        double frontRightTarget = forwardVelocity - strafeVelocity - rotateVelocity;
+        double backLeftTarget = forwardVelocity - strafeVelocity + rotateVelocity;
+        double backRightTarget = forwardVelocity + strafeVelocity - rotateVelocity;
+
+        double maxMagnitude = Math.max(maxTicksPerSecond, Math.max(
+                Math.max(Math.abs(frontLeftTarget), Math.abs(frontRightTarget)),
+                Math.max(Math.abs(backLeftTarget), Math.abs(backRightTarget))));
+        double scale = maxTicksPerSecond / maxMagnitude;
+
+        WheelVelocities result = new WheelVelocities();
+        driveWheelToVelocity(MotorLocation.FRONT_LEFT, frontLeftTarget * scale, result);
+        driveWheelToVelocity(MotorLocation.FRONT_RIGHT, frontRightTarget * scale, result);
+        driveWheelToVelocity(MotorLocation.BACK_LEFT, backLeftTarget * scale, result);
+        driveWheelToVelocity(MotorLocation.BACK_RIGHT, backRightTarget * scale, result);
+        return result;
+    }
+
+    private void driveWheelToVelocity(MotorLocation location, double targetTicksPerSecond, WheelVelocities result) {
+        RobotMotor motor = motors.get(location);
+        double actual = motor.getVelocity();
+        double error = targetTicksPerSecond - actual;
+        double correction = velocityControllers.get(location).calculate(error);
+        motor.setPower(clampPower(correction));
+        result.record(location, targetTicksPerSecond, actual);
+    }
+
+    /**
+     * Target and actual velocity (ticks/second) for each wheel from one
+     * driveAtVelocity()/driveHolonomicAtVelocity() call -- lets a caller log or display
+     * these values without reading the hardware a second time.
+     */
+    public static final class WheelVelocities {
+        private final Map<MotorLocation, Double> targets = new EnumMap<>(MotorLocation.class);
+        private final Map<MotorLocation, Double> actuals = new EnumMap<>(MotorLocation.class);
+
+        private void record(MotorLocation location, double target, double actual) {
+            targets.put(location, target);
+            actuals.put(location, actual);
+        }
+
+        public double getTarget(MotorLocation location) {
+            return targets.get(location);
+        }
+
+        public double getActual(MotorLocation location) {
+            return actuals.get(location);
+        }
+    }
+
+    /**
      * Drives only the given wheel, stopping the other three. For isolated checks --
      * e.g. holding the robot up to confirm one wheel's Direction is set so positive
      * power actually spins it in the forward-rolling sense.
@@ -109,6 +211,23 @@ public class OmniDrivetrain implements Subsystem {
     public void driveSingleWheel(MotorLocation location, double power) {
         for (MotorLocation each : MotorLocation.values()) {
             motors.get(each).setPower(each == location ? clampPower(power) : 0);
+        }
+    }
+
+    /** Measured encoder velocity for one wheel, in ticks/second. */
+    public double getVelocity(MotorLocation location) {
+        return motors.get(location).getVelocity();
+    }
+
+    /** Accumulated encoder position for one wheel, in ticks, since the last resetEncoders(). */
+    public int getCurrentPosition(MotorLocation location) {
+        return motors.get(location).getCurrentPosition();
+    }
+
+    /** Zeroes all four wheels' accumulated encoder counts -- call at the start of a test run. */
+    public void resetEncoders() {
+        for (RobotMotor motor : motors.values()) {
+            motor.resetEncoder();
         }
     }
 
