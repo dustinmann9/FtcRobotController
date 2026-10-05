@@ -3,8 +3,10 @@ package org.firstinspires.ftc.teamcode;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
+import org.firstinspires.ftc.teamcode.drive.MotorLocation;
 import org.firstinspires.ftc.teamcode.drive.OmniDrivetrain;
 import org.firstinspires.ftc.teamcode.drive.RobotConfigs;
+import org.firstinspires.ftc.teamcode.util.CsvLogger;
 
 /**
  * BASIC TELEOP -- full holonomic drive. Left stick controls translation
@@ -13,23 +15,28 @@ import org.firstinspires.ftc.teamcode.drive.RobotConfigs;
  * speed scale up/down by 0.1 (0.0-1.0), applied to all three inputs, so the
  * driver can dial down max speed without losing proportional stick control.
  *
- * Uses OmniDrivetrain.drive() (raw power mixing, no correction). If strafing
- * or rotating turns out backward once tested, negate that one term below --
- * the forward/backward sign was already corrected the same way, in
- * OmniDrivetrain's motor Direction settings.
+ * Uses OmniDrivetrain.drive() (raw power mixing, no correction) -- this is the
+ * "no PID" baseline. Logs accumulated ticks per wheel to CSV so a drive
+ * session here can be directly compared against BasicTeleOpOmniDrivePid's to
+ * see how much net drift each approach leaves behind.
  */
 @TeleOp(name = "Basic TeleOp: Omni Drive", group = "Example")
 public class BasicTeleOpOmniDrive extends OpMode {
     private static final int SPEED_SCALE_MAX_STEPS = 10; // 10 steps of 0.1 = scale of 1.0
+    private static final double TICKS_PER_REVOLUTION = 537.7;
 
     private final OmniDrivetrain drivetrain = new OmniDrivetrain(RobotConfigs.ACTIVE);
     // Tracked as integer steps, not a double, so repeated +/-0.1 presses can't drift
     // away from a clean multiple of 0.1 due to floating-point rounding.
     private int speedScaleSteps = SPEED_SCALE_MAX_STEPS;
+    private CsvLogger csvLogger;
 
     @Override
     public void init() {
         drivetrain.init(hardwareMap);
+        drivetrain.resetEncoders();
+        csvLogger = new CsvLogger("teleop_omni_no_pid",
+                "timestampMillis", "location", "ticksPerSecond", "rpm", "accumulatedTicks");
     }
 
     @Override
@@ -58,14 +65,23 @@ public class BasicTeleOpOmniDrive extends OpMode {
 
         drivetrain.drive(forward, strafeRight, rotateClockwise);
 
+        long timestampMillis = System.currentTimeMillis();
         telemetry.addData("Speed scale", "%.1f", speedScale);
         telemetry.addData("Forward", "%.2f", forward);
         telemetry.addData("Strafe right", "%.2f", strafeRight);
         telemetry.addData("Rotate clockwise", "%.2f", rotateClockwise);
+        for (MotorLocation location : MotorLocation.values()) {
+            double ticksPerSecond = drivetrain.getVelocity(location);
+            double rpm = (ticksPerSecond / TICKS_PER_REVOLUTION) * 60.0;
+            int accumulatedTicks = drivetrain.getCurrentPosition(location);
+            telemetry.addData(location.toString(), "%.1f RPM, %d ticks", rpm, accumulatedTicks);
+            csvLogger.writeRow(timestampMillis, location, ticksPerSecond, rpm, accumulatedTicks);
+        }
     }
 
     @Override
     public void stop() {
         drivetrain.stop();
+        csvLogger.close();
     }
 }
