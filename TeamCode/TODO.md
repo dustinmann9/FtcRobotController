@@ -63,3 +63,66 @@ Docs: https://pedropathing.com/docs/pathing/installation
       hand-written paths prove sufficient) becomes the team's standard
 - [ ] Document the decision and rationale here or in a follow-up doc, so future
       students know why
+
+# Drivetrain Velocity PID -- Open Items
+
+`OmniDrivetrain.driveAtVelocity()`/`driveHolonomicAtVelocity()` use a per-wheel
+`PidController` to correct for real, measured motor-to-motor variance (confirmed cause:
+uneven weight distribution -- a battery pack mounted on the left side -- not random
+motor defects; see `WheelVelocityTelemetryDiagnostic` CSV data).
+
+- [ ] `VELOCITY_KP = 0.0003` (in `OmniDrivetrain.java`) is a rough starting guess, not
+      tuned. `kI`/`kD` are still 0. Tune using `WheelVelocityPidDiagnostic` (straight
+      line) and `Basic TeleOp: Omni Drive (Our PID)` (full holonomic).
+- [ ] Re-run the no-PID vs. our-PID comparison (`Basic TeleOp: Omni Drive` vs.
+      `Basic TeleOp: Omni Drive (Our PID)`) now that the redundant-encoder-read fix is
+      in (`OmniDrivetrain.WheelVelocities` return values) -- the first comparison was
+      confounded by the PID version running at ~33Hz vs. baseline's ~51Hz.
+- [ ] Both TeleOps now log target + actual velocity per wheel to CSV
+      (`/sdcard/FIRST/analysis/`) -- use that to compute real tracking error instead of
+      needing to hand-drive identical paths for comparison.
+- [ ] `WheelVelocitySdkDiagnostic` (Control Hub firmware's built-in velocity PIDF) is
+      noticeably gentler at braking to a stop than our own PID (~650ms vs. ~150ms decay
+      to zero) -- if the SDK path is ever preferred over our own, its PIDF gains need
+      pulling up via `setVelocityPIDFCoefficients()`.
+- [ ] Possible future addition: a per-wheel feedforward offset (baseline power
+      correction derived from past CSV data), to reduce how much the live PID has to
+      correct, since the weight-distribution bias is structural/repeatable, not random.
+- [ ] Once a second battery pack is added (one per hub) and mounted symmetrically, this
+      whole characterization should be redone -- the bias will change, and may shrink a
+      lot, once weight distribution improves. Don't assume today's variance numbers
+      stay valid after any hardware rebalancing.
+- [ ] PID loop timing note (for whoever revisits this): `PidController` measures actual
+      elapsed time per call rather than assuming a fixed loop rate, so it doesn't need
+      the control loop to run at a constant frequency to work correctly -- see the
+      discussion in-session about fixed-timestep vs. measured-dt control. Revisit if
+      `kD` is ever tuned away from 0: very small `dt` between calls can spike the
+      derivative term ("derivative kick"); a minimum-dt clamp or filtering may be needed.
+
+# Match/Test Telemetry -- Metrics Worth Tracking
+
+`CsvLogger` (`TeamCode/.../util/CsvLogger.java`) is a generic mechanism for logging any
+structured time-series data to `/sdcard/FIRST/analysis/` for post-match pull-off and
+analysis (`adb pull`) -- not specific to the drivetrain work it was built for. Candidate
+metrics worth wiring up for real matches, roughly in priority order:
+
+- [ ] **Battery voltage** (`hardwareMap.voltageSensor.getVoltage()`) -- distinguishes
+      "the robot got sluggish because the battery sagged" from "something is actually
+      wrong," especially late in a match; also useful across matches to track whether a
+      specific battery is aging out.
+- [ ] **Loop cycle time** -- a histogram of loop durations over a match reveals lag
+      spikes (blocking sensor reads, GC pauses) invisible from a single telemetry glance.
+- [ ] **Per-wheel velocity + PID correction output** during real matches, not just bench
+      tests -- confirms the correction still holds up under real match conditions
+      (bumps, different floor, full weight with game-piece mechanisms attached).
+- [ ] **Pose over time**, once a real `Localizer` exists -- lets you plot the robot's
+      actual path after a match for autonomous debugging or driver route review.
+- [ ] **Scoring event timestamps** (`ScoringElementCounter` already counts
+      collects/attempts -- log *when*, not just how many) -- enables cycle-time analysis
+      (time between collecting and scoring), a real strategic metric.
+- [ ] **Motor current draw**, if `DcMotorEx` exposes it on this hardware -- distinguishes
+      a stalled/binding motor (near-zero velocity, high current) from a disconnected one
+      (near-zero velocity, near-zero current); encoder data alone can't tell these apart.
+- [ ] **Match phase + elapsed time** as a column on every logged row -- not a sensor
+      reading, just context, but it's what lets later analysis ask "did this degrade
+      specifically in endgame" against any of the metrics above.
