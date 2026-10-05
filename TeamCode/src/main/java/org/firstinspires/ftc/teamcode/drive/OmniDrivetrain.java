@@ -31,9 +31,18 @@ import java.util.Map;
  * only means adding a new DriveConfig, not editing this class.
  */
 public class OmniDrivetrain implements Subsystem {
-    // Starting guess, not a tuned value -- see WheelVelocityPidDiagnostic to tune these
-    // against real data. kP sized so a full-scale error (~2796 ticks/s, this drive motor's
-    // no-load max) would request roughly full power on its own: 1.0 / 2796 =~ 0.00036.
+    // goBILDA 5203, 312 RPM no-load, 537.7 ticks/rev output shaft -- the top of the
+    // commandable velocity range, in ticks/second.
+    private static final double MAX_VELOCITY_TICKS_PER_SECOND = 312.0 / 60.0 * 537.7;
+
+    // Feedforward: the power the motor needs to hold a given speed, roughly linear in speed.
+    // 1 / max speed gives full power at full speed. Estimated from the no-load spec, so it
+    // will shift with battery voltage and load -- check it against the CSV logs.
+    private static final double VELOCITY_KF = 1.0 / MAX_VELOCITY_TICKS_PER_SECOND;
+
+    // Proportional-only feedback, corrects per-wheel variance around the feedforward.
+    // Starting guess, not tuned -- see WheelVelocityPidDiagnostic to tune against real data.
+    // Without the feedforward term, this P-only loop settles near 46% of target speed.
     private static final double VELOCITY_KP = 0.0003;
     private static final double VELOCITY_KI = 0;
     private static final double VELOCITY_KD = 0;
@@ -175,8 +184,9 @@ public class OmniDrivetrain implements Subsystem {
         RobotMotor motor = motors.get(location);
         double actual = motor.getVelocity();
         double error = targetTicksPerSecond - actual;
+        double feedforward = targetTicksPerSecond * VELOCITY_KF;
         double correction = velocityControllers.get(location).calculate(error);
-        motor.setPower(clampPower(correction));
+        motor.setPower(clampPower(feedforward + correction));
         result.record(location, targetTicksPerSecond, actual);
     }
 
